@@ -1,0 +1,25 @@
+{
+  "connectors": {
+    "openai": {
+      "uid": "default-openai",
+      "description": "Primary model for complex analysis and architecture decisions."
+    },
+    "gemini": {
+      "uid": "default-gemini",
+      "description": "Secondary model for research and large context tasks."
+    },
+    "fal_ai": {
+      "uid": "default-fal",
+      "description": "Image generation and media tasks."
+    },
+    "github": {
+      "uid": "user-github-connector",
+      "description": "GitHub automation and version control."
+    }
+  },
+  "project": {
+    "name": "MOBU-Manus-Migration",
+    "timezone": "America/Denver",
+    "operator": "Mista BOo"
+  }
+}

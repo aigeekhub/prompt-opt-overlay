@@ -1,0 +1,282 @@
+CLAW TECHNICAL KNOWLEDGE BASE
+HYBRID AI OPERATING ENVIRONMENT
+VERSION 1.0
+
+
+PROJECT SCOPE AND VISION
+
+CLAW is a hybrid AI operating environment that separates the intelligence layer (VPS) from the interface layer (Windows overlay). The vision is to provide an always-available, multi-model AI execution system with real-time observability that works even when the user's local machine is off. The system starts as a personal tool and evolves into a SaaS product. All architecture decisions must account for future multi-tenancy from day one.
+
+
+RESPONSIVE AND MOBILE-FIRST UI/UX DESIGN GUIDELINES
+
+The primary interface is the Windows overlay (desktop-first for this component). However, all React components must be built with responsive principles for future extraction to web and mobile dashboards.
+
+Overlay Design Rules:
+Default width 380px, height 600px, resizable
+Always-on-top with adjustable opacity
+Dark theme with high contrast for readability
+All interactive elements must have minimum 44px touch targets
+Font sizes minimum 14px for body text, 12px for secondary text
+Event timeline items must be scannable without horizontal scrolling
+Response area must support variable-height content with smooth scrolling
+Permission modals must be clearly dismissible with both keyboard and mouse
+
+Color Tokens:
+Background primary: #1a1a2e
+Background secondary: #16213e
+Text primary: #e0e0e0
+Text secondary: #a0a0b0
+Accent: #00d4ff
+Success: #00cc88
+Warning: #ffb700
+Error: #ff4444
+Border: #2a2a4a
+
+Typography:
+System font stack: Segoe UI, system-ui, sans-serif
+Headings: 600 weight
+Body: 400 weight
+Code/mono: Cascadia Code, Consolas, monospace
+
+Spacing:
+Base unit: 8px
+Component padding: 12px to 16px
+Section gaps: 16px to 24px
+Border radius: 8px panels, 4px buttons and inputs
+
+Future Web Dashboard Breakpoints (for SaaS phase):
+Mobile: 320px to 767px
+Tablet: 768px to 1023px
+Desktop: 1024px and above
+Wide: 1440px and above
+
+
+SECURITY, PRIVACY, AND COMPLIANCE REQUIREMENTS
+
+Authentication:
+All API requests require Bearer token in Authorization header
+Tokens are compared against hashed values in the tenants table
+No API key transmission in URL parameters
+Signed URLs for live view use JWT with 15-minute expiration
+Telegram authentication uses allowlisted user IDs plus admin PIN
+
+Network Security:
+Phase 1-5 (Personal Use): All VPS services behind Tailscale mesh networking
+Zero public ports exposed during personal use phase
+All services accessible only via Tailscale IP (100.x.x.x range)
+SSH accessible only via Tailscale IP, key-based auth, password auth disabled, root login disabled
+xRDP for XFCE desktop accessible only via Tailscale IP, separate non-root user
+OpenClaw Gateway API accessible only via Tailscale IP
+noVNC live view accessible only via Tailscale IP with signed URL tokens
+Redis bound to 127.0.0.1 only
+PostgreSQL bound to 127.0.0.1 only
+Telegram bot runs in polling mode (outbound connections only, no inbound webhook)
+Tailscale handles encrypted tunneling between local machine and VPS
+Future SaaS: open port 443 with HTTPS via Let's Encrypt, switch Telegram to webhook mode
+xRDP and SSH remain Tailscale-only even after SaaS port opening
+
+XFCE Remote Desktop Security:
+xRDP listens only on Tailscale interface, not on public interfaces
+Separate non-root user account for xRDP login
+Session timeout after 30 minutes of inactivity
+Used for manual VPS debugging and inspection only
+Not a production workflow surface
+
+Data Security:
+All secrets stored in .env file, never committed to version control
+.env.example file provided with placeholder values
+Database credentials use strong passwords (32+ characters)
+API keys for model providers stored in .env only
+Local overlay config encrypted via Windows Credential Manager
+No plaintext secrets in logs or error messages
+
+Local Machine Security:
+Every file access request from agent requires explicit user approval via overlay modal
+Screenshot and clipboard access require per-session permission
+No auto-grant mechanisms
+Permission state resets on session end
+File access scoped to specific paths, no recursive directory access without approval
+
+Compliance (Future SaaS):
+All tables include tenant_id for data isolation
+Events table provides complete audit trail of all agent actions
+Data deletion endpoint needed for GDPR compliance
+Data export endpoint needed for GDPR portability
+Consent tracking for data collection
+Model name and version logged with every API call for regulatory transparency
+
+
+RECOMMENDED AI AND AUTOMATION TOOLS
+
+Development:
+Google Antigravity as primary IDE (agent-first, multi-model support)
+Cursor as secondary focused editor
+GitHub Copilot for inline completions
+
+CI/CD:
+GitHub Actions for automated testing on push
+Docker and Docker Compose for containerization
+Database migration runner in deployment pipeline
+
+Monitoring:
+Health check endpoint at GET /health
+Cron-based uptime monitoring with Telegram alerts
+PostgreSQL query monitoring via pg_stat_activity
+Redis monitoring via redis-cli INFO
+
+Testing:
+Vitest or Jest with Supertest for gateway API tests
+pytest for Python worker and Telegram bot tests
+Docker Compose test profile for integration tests
+
+Code Quality:
+ESLint with TypeScript strict config
+Prettier for formatting
+Black and isort for Python formatting
+Type hints required on all Python function signatures
+
+
+APIS, INTEGRATIONS, AND TECHNICAL STACK OVERVIEW
+
+Gateway (Node.js):
+Fastify 4+ with TypeScript
+@fastify/websocket for WebSocket endpoint
+@fastify/multipart for file upload handling
+@fastify/rate-limit for request throttling
+@fastify/jwt for signed URL token generation
+pg (node-postgres) for PostgreSQL connectivity
+ioredis for Redis pub/sub and cache
+
+Workers (Python):
+Celery 5+ with Redis as message broker
+playwright for browser automation agents
+httpx for async HTTP requests to model APIs
+pydantic for input/output data validation
+python-dotenv for environment configuration
+
+Model Provider Adapters:
+OpenAI adapter: openai Python SDK for GPT models
+Anthropic adapter: anthropic Python SDK for Claude models
+Google adapter: google-generativeai SDK for Gemini models
+Ollama adapter: direct HTTP to local Ollama server for local models
+
+Telegram Bot:
+python-telegram-bot 20+ for bot framework
+Polling mode for Phase 1-5 (no public webhook endpoint needed behind Tailscale)
+Webhook mode for future SaaS phase (requires public HTTPS endpoint)
+Allowlist-based user verification
+PIN authentication for admin commands
+Inline keyboard support for action buttons
+
+Overlay (Electron + React):
+Electron 28+ as application shell
+React 18+ with TypeScript for UI
+Tailwind CSS for styling
+Zustand for lightweight state management
+Picovoice Porcupine SDK for wake word detection
+Native WebSocket API for event stream connection
+Connects to VPS via Tailscale IP (not public domain)
+
+Live View:
+noVNC for Phase 1 browser-tab streaming (accessed via Tailscale IP)
+WebRTC for Phase 5 embedded streaming
+nginx as reverse proxy for noVNC WebSocket
+
+Infrastructure:
+PostgreSQL 16+ for persistent storage
+Redis 7+ for queue broker and pub/sub
+Docker and Docker Compose for deployment
+Tailscale for private mesh networking (free tier, up to 100 devices)
+XFCE 4 for lightweight VPS remote desktop environment
+xRDP for remote desktop protocol access to XFCE (Tailscale-only)
+Chromium or Firefox on VPS for manual browser use and Playwright
+
+Future SaaS additions:
+Let's Encrypt for TLS certificates (when public API enabled)
+UFW or iptables for port 443 only (when public API enabled)
+
+
+CODE CONVENTIONS, VERSION CONTROL PRACTICES, WORKFLOWS
+
+JavaScript and TypeScript:
+TypeScript strict mode enabled in tsconfig.json
+camelCase for variables, functions, and method names
+PascalCase for React components, interfaces, and type aliases
+UPPER_SNAKE_CASE for constants and environment variables
+Async/await pattern for all asynchronous code
+No use of any type without explicit justification comment
+Error boundaries on all React component trees
+Destructured imports preferred over namespace imports
+
+Python:
+Python 3.11+ required
+snake_case for variables, functions, modules
+PascalCase for class names
+Type hints on all public function signatures
+Docstrings on all public functions and classes
+No bare except clauses, always catch specific exceptions
+Pydantic models for all data transfer objects
+f-strings for string formatting
+
+SQL:
+All table and column names in snake_case
+All queries use parameterized placeholders, never string concatenation
+Migrations numbered sequentially: 001_initial.sql, 002_add_events.sql
+Every table includes created_at TIMESTAMPTZ DEFAULT now()
+Every table includes tenant_id UUID with foreign key to tenants
+
+Version Control:
+Git with conventional commits: feat:, fix:, docs:, refactor:, test:, chore:
+Main branch is production
+Develop branch for integration
+Feature branches: feature/description
+Hotfix branches: hotfix/description
+Squash merge to main
+Tag releases with semantic versioning: v1.0.0, v1.1.0
+
+Docker:
+Dockerfile per service (gateway, workers, telegram, overlay-build)
+docker-compose.yml for full stack
+docker-compose.test.yml for test environment
+Multi-stage builds to minimize image size
+Non-root user in production containers
+Health checks defined in compose file
+
+
+SEO STANDARDS, DOCUMENTATION, AND EXTERNAL RESOURCES GUIDELINES
+
+SEO (for SaaS landing page and docs site):
+Meta title format: CLAW - [Page Description] | AIGEEEKHUB
+Meta descriptions under 160 characters
+Canonical URLs on all pages
+Open Graph tags for social sharing
+Structured data markup for software product
+Fast loading: target under 3 seconds LCP
+Mobile-friendly responsive layout
+
+Documentation Standards:
+README.md in project root with quickstart
+Docs directory with organized guides
+API reference generated from route definitions
+Code comments for complex logic only, not obvious code
+Architecture decision records for significant choices
+Changelog maintained per release
+
+External Resources:
+Fastify documentation: https://fastify.dev/docs/latest/
+Celery documentation: https://docs.celeryq.dev/
+Electron documentation: https://www.electronjs.org/docs/
+Porcupine documentation: https://picovoice.ai/docs/porcupine/
+noVNC documentation: https://novnc.com/info.html
+Tailwind CSS documentation: https://tailwindcss.com/docs
+React documentation: https://react.dev/
+PostgreSQL documentation: https://www.postgresql.org/docs/
+Redis documentation: https://redis.io/docs/
+Tailscale documentation: https://tailscale.com/kb/
+XFCE documentation: https://docs.xfce.org/
+xRDP documentation: https://github.com/neutrinolabs/xrdp
+Apache Guacamole documentation: https://guacamole.apache.org/doc/gug/
+
+
+END OF SECTION 3: TECHNICAL KNOWLEDGE BASE
