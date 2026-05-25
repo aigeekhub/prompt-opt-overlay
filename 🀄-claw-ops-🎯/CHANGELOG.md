@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.4.0] - 2026-05-24
+### Added
+- **Telegram Bot Interface (Phase B5):** Implemented outbound polling bot in `telegram/bot.py` with commands `/run` (job dispatch via gateway), `/status` (DB timeline lookup), and `/kill` (job cancellation).
+- **Interactive Admin PIN Security:** Integrated SHA-256 PIN matching (`telegram/security.py`) to restrict destructive operations (like `/kill`) behind an interactive confirmation reply flow.
+- **Signed Live View Stub (Phase B6):** Added cryptographic URL signature generation and validation (HMAC-SHA256) inside `gateway/server.js` with a 15-minute token expiration.
+- **Premium Live View HTML Page:** Created a GET `/live/:job_id` route serving a fully styled Outfit-font dark-themed mock live view console page displaying virtual screen layout and console logs.
+- **Compose Service Integration:** Integrated the `telegram` container inside `docker-compose.yml` and configured default environmental variables.
+
 ## [1.3.0] - 2026-05-24
 ### Added
 - **Python Celery Worker ("Hermes"):** Implemented `worker/celery_app.py` and `worker/tasks.py` to run model execution.

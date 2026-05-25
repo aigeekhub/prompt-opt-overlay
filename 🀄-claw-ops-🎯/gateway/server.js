@@ -81,6 +81,50 @@ function hashApiKey(key) {
   return crypto.createHash('sha256').update(key).digest('hex');
 }
 
+// Helper: Generate Signed URL for Live View
+const LIVE_VIEW_SECRET = process.env.LIVE_VIEW_SECRET || 'mobu_live_view_secure_secret_key_2026';
+
+function generateSignedUrl(request, jobId) {
+  const expiresAt = Date.now() + 15 * 60 * 1000; // 15 minutes expiration
+  const payload = JSON.stringify({ jobId, expiresAt });
+  
+  const hmac = crypto.createHmac('sha256', LIVE_VIEW_SECRET);
+  hmac.update(payload);
+  const signature = hmac.digest('hex');
+  
+  // Base64URL encode the payload + signature JSON
+  const tokenObj = { payload: JSON.parse(payload), signature };
+  const token = Buffer.from(JSON.stringify(tokenObj)).toString('base64url');
+  
+  const host = request.headers.host || '127.0.0.1:3000';
+  const protocol = request.headers['x-forwarded-proto'] || 'http';
+  return `${protocol}://${host}/live/${jobId}?token=${token}`;
+}
+
+// Helper: Verify Live View Token
+function verifyLiveViewToken(jobId, tokenString) {
+  try {
+    const jsonStr = Buffer.from(tokenString, 'base64url').toString('utf8');
+    const { payload, signature } = JSON.parse(jsonStr);
+    
+    if (payload.jobId !== jobId) return false;
+    if (Date.now() > payload.expiresAt) return false;
+    
+    const hmac = crypto.createHmac('sha256', LIVE_VIEW_SECRET);
+    hmac.update(JSON.stringify(payload));
+    const expectedSignature = hmac.digest('hex');
+    
+    // Constant-time comparison to prevent timing attacks
+    return crypto.timingSafeEqual(
+      Buffer.from(signature, 'hex'),
+      Buffer.from(expectedSignature, 'hex')
+    );
+  } catch (err) {
+    return false;
+  }
+}
+
+
 // Authentication Hook for HTTP Requests
 fastify.decorate('authenticate', async (request, reply) => {
   try {
@@ -224,10 +268,16 @@ fastify.register(async (api) => {
     };
     await redisClient.rpush('claw_ops_jobs', JSON.stringify(jobPayload));
 
+    const liveViewUrl = generateSignedUrl(request, jobId);
+
     reply.code(201).send({
       job_id: jobId,
       session_id: targetSessionId,
       status: 'queued',
+      live_view: {
+        available: true,
+        url: liveViewUrl
+      }
     });
   });
 
@@ -323,6 +373,430 @@ fastify.register(async (api) => {
     reply.code(201).send(result.rows[0]);
   });
 });
+
+// Helper: HTML Escape
+function htmlEscape(str) {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// 6. GET /live/:job_id — Live View Page (authenticates via signed query token)
+fastify.get('/live/:job_id', async (request, reply) => {
+  const jobId = request.params.job_id;
+  const token = request.query.token;
+
+  if (!token) {
+    reply.code(401).send({ error: 'Unauthorized', message: 'Missing live view token parameter' });
+    return;
+  }
+
+  const isValid = verifyLiveViewToken(jobId, token);
+  if (!isValid) {
+    reply.code(401).send({ error: 'Unauthorized', message: 'Invalid or expired live view token' });
+    return;
+  }
+
+  // Render a premium mock live view stub page
+  const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CLAW-Ops Live View - ${htmlEscape(jobId)}</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-color: #0b0c16;
+      --panel-bg: #14162e;
+      --panel-border: rgba(0, 212, 255, 0.15);
+      --text-color: #e0e0e8;
+      --text-muted: #8c8ea6;
+      --accent: #00d4ff;
+      --accent-gradient: linear-gradient(135deg, #00d4ff 0%, #0077ff 100%);
+      --success: #00cc88;
+      --danger: #ff4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    header {
+      background-color: rgba(20, 22, 46, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--panel-border);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      z-index: 10;
+    }
+
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .logo-badge {
+      background: var(--accent-gradient);
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #0b0c16;
+      font-size: 18px;
+      box-shadow: 0 0 15px rgba(0, 212, 255, 0.4);
+    }
+
+    .logo-title {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .logo-title span {
+      background: var(--accent-gradient);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .status-container {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .status-pill {
+      background-color: rgba(0, 204, 136, 0.1);
+      border: 1px solid var(--success);
+      color: var(--success);
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--success);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(0.95); opacity: 0.5; }
+      50% { transform: scale(1.1); opacity: 1; }
+      100% { transform: scale(0.95); opacity: 0.5; }
+    }
+
+    .job-id-badge {
+      background-color: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 6px 12px;
+      border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .main-container {
+      flex: 1;
+      display: flex;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .screen-canvas-container {
+      flex: 1;
+      background-color: #030408;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .screen-mockup {
+      width: 85%;
+      aspect-ratio: 16/9;
+      background: radial-gradient(circle at center, #1b1d3a 0%, #0d0e1b 100%);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5), 0 0 40px rgba(0, 212, 255, 0.05);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .screen-header {
+      background-color: #121324;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      height: 36px;
+      display: flex;
+      align-items: center;
+      padding: 0 16px;
+      justify-content: space-between;
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 6px;
+    }
+
+    .window-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    .window-dot.close { background-color: #ff5f56; }
+    .window-dot.minimize { background-color: #ffbd2e; }
+    .window-dot.maximize { background-color: #27c93f; }
+
+    .window-title {
+      font-size: 12px;
+      color: var(--text-muted);
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .screen-body {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .interactive-mock-desktop {
+      position: absolute;
+      inset: 0;
+      background-image: radial-gradient(rgba(0, 212, 255, 0.15) 1px, transparent 1px);
+      background-size: 20px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .vnc-icon {
+      font-size: 64px;
+      margin-bottom: 16px;
+      filter: drop-shadow(0 0 15px var(--accent));
+      animation: float 4s ease-in-out infinite;
+    }
+
+    @keyframes float {
+      0% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+      100% { transform: translateY(0px); }
+    }
+
+    .mock-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .mock-subtitle {
+      color: var(--text-muted);
+      font-size: 14px;
+      text-align: center;
+      max-width: 400px;
+      line-height: 1.5;
+    }
+
+    .logs-panel {
+      width: 380px;
+      border-left: 1px solid var(--panel-border);
+      background-color: #0e1022;
+      display: flex;
+      flex-direction: column;
+      z-index: 5;
+    }
+
+    .logs-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .logs-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-color);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .logs-title svg {
+      color: var(--accent);
+    }
+
+    .logs-badge {
+      background-color: rgba(0, 212, 255, 0.1);
+      color: var(--accent);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .logs-content {
+      flex: 1;
+      padding: 20px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .log-line {
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
+
+    .log-line.accent {
+      color: var(--accent);
+    }
+
+    .log-line.success {
+      color: var(--success);
+    }
+
+    .log-line.system {
+      color: #bfa6ff;
+    }
+
+    .log-time {
+      color: rgba(255, 255, 255, 0.25);
+      margin-right: 8px;
+    }
+
+    footer {
+      background-color: #090a12;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding: 12px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+
+    .footer-link {
+      color: var(--accent);
+      text-decoration: none;
+      transition: color 0.2s;
+    }
+
+    .footer-link:hover {
+      color: #0077ff;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-container">
+      <div class="logo-badge">🀄</div>
+      <div class="logo-title">CLAW<span>-Ops</span></div>
+    </div>
+    <div class="status-container">
+      <div class="job-id-badge">Job: ${htmlEscape(jobId)}</div>
+      <div class="status-pill">
+        <div class="status-dot"></div>
+        Live View Ready
+      </div>
+    </div>
+  </header>
+
+  <div class="main-container">
+    <div class="screen-canvas-container">
+      <div class="screen-mockup">
+        <div class="screen-header">
+          <div class="window-controls">
+            <div class="window-dot close"></div>
+            <div class="window-dot minimize"></div>
+            <div class="window-dot maximize"></div>
+          </div>
+          <div class="window-title">vnc_session_desktop</div>
+          <div></div>
+        </div>
+        <div class="screen-body">
+          <div class="interactive-mock-desktop">
+            <div class="vnc-icon">🎯</div>
+            <h2 class="mock-title">noVNC Live View</h2>
+            <p class="mock-subtitle">A secure desktop session is ready to stream. In the next phase, this canvas will display your remote VPS XFCE environment.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="logs-panel">
+      <div class="logs-header">
+        <div class="logs-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line></svg>
+          Console Logs
+        </div>
+        <div class="logs-badge">STUB</div>
+      </div>
+      <div class="logs-content">
+        <div class="log-line system"><span class="log-time">[00:00:01]</span>Initializing secure WebSocket tunnels...</div>
+        <div class="log-line system"><span class="log-time">[00:00:02]</span>Connecting VNC proxy interface...</div>
+        <div class="log-line accent"><span class="log-time">[00:00:03]</span>VNC Server handshake complete.</div>
+        <div class="log-line success"><span class="log-time">[00:00:04]</span>Authenticated and rendering virtual display frame...</div>
+        <div class="log-line"><span class="log-time">[00:00:05]</span>Waiting for job timeline events...</div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div>CLAW-Ops VPS Brain &copy; 2026</div>
+    <div>Secure Tailscale Overlay Tunnel &bull; <a href="https://github.com/aigeekhub/prompt-opt-overlay" class="footer-link" target="_blank">Repository</a></div>
+  </footer>
+
+</body>
+</html>
+  `;
+
+  reply.type('text/html').send(htmlContent);
+});
+
 
 // 5. WS /v1/events — Live Websocket Event Stream
 fastify.route({
