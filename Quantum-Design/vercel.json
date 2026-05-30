@@ -4,11 +4,11 @@
   "rewrites": [
     {
       "source": "/api/vertex-proxy/:region/:model",
-      "destination": "/api/vertex-proxy"
+      "destination": "/api/vertex-proxy?region=:region&model=:model"
     },
     {
       "source": "/api/gemini-proxy/:path*",
-      "destination": "/api/gemini-proxy"
+      "destination": "/api/gemini-proxy?_path=:path*"
     },
     {
       "source": "/proxy/openai/:path*",

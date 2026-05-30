@@ -221,7 +221,7 @@ export async function fetchModelsForProvider(
   try {
     switch (provider) {
       case 'gemini': {
-        const apiKey = settings.gemini.apiKey || (process as any).env.GEMINI_API_KEY;
+        const apiKey = settings.gemini.apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
         const useProxy = !apiKey;
         const url = useProxy 
           ? `/api/gemini-proxy/v1beta/models` 
@@ -330,7 +330,7 @@ export async function generateContentStream(params: GenerationParams): Promise<s
 
   switch (provider) {
     case 'gemini': {
-      const apiKey = settings.gemini.apiKey || (process as any).env.GEMINI_API_KEY;
+      const apiKey = settings.gemini.apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
       const model = settings.gemini.model || 'gemini-2.5-flash';
       
       const useProxy = !apiKey;
