@@ -3,6 +3,14 @@
   "cleanUrls": true,
   "rewrites": [
     {
+      "source": "/api/vertex-proxy/:region/:model",
+      "destination": "/api/vertex-proxy"
+    },
+    {
+      "source": "/api/gemini-proxy/:path*",
+      "destination": "/api/gemini-proxy"
+    },
+    {
       "source": "/proxy/openai/:path*",
       "destination": "https://api.openai.com/:path*"
     },
