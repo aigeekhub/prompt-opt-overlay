@@ -1,0 +1,30 @@
+{
+  "version": 2,
+  "cleanUrls": true,
+  "rewrites": [
+    {
+      "source": "/proxy/openai/:path*",
+      "destination": "https://api.openai.com/:path*"
+    },
+    {
+      "source": "/proxy/claude/:path*",
+      "destination": "https://api.anthropic.com/:path*"
+    },
+    {
+      "source": "/proxy/grok/:path*",
+      "destination": "https://api.x.ai/:path*"
+    },
+    {
+      "source": "/proxy/openrouter/:path*",
+      "destination": "https://openrouter.ai/:path*"
+    },
+    {
+      "source": "/proxy/gemini/:path*",
+      "destination": "https://generativelanguage.googleapis.com/:path*"
+    },
+    {
+      "source": "/((?!api/|assets/|favicon.ico|.*\\.png|.*\\.js|.*\\.css).*)",
+      "destination": "/index.html"
+    }
+  ]
+}
