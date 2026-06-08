@@ -12,6 +12,8 @@
   "dependencies": {
     "@google/genai": "^1.49.0",
     "canvas-confetti": "^1.9.4",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "motion": "^12.38.0",

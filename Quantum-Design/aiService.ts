@@ -94,6 +94,22 @@ export function saveSettings(settings: ModelSettings): void {
   }
 }
 
+function getUserEmail(): string {
+  try {
+    return localStorage.getItem('user_email') || 'anonymous@aigeekhub.com';
+  } catch (e) {
+    return 'anonymous@aigeekhub.com';
+  }
+}
+
+function getApiBase(): string {
+  try {
+    return typeof window !== 'undefined' && window.location.pathname.startsWith('/quantum') ? '/quantum' : '';
+  } catch (e) {
+    return '';
+  }
+}
+
 // --- GOOGLE OAUTH JWT SIGNING FOR VERTEX AI ---
 
 function base64UrlEncode(obj: any): string {
@@ -224,9 +240,13 @@ export async function fetchModelsForProvider(
         const apiKey = settings.gemini.apiKey || (typeof process !== 'undefined' ? process.env.GEMINI_API_KEY : undefined);
         const useProxy = !apiKey;
         const url = useProxy 
-          ? `/api/gemini-proxy/v1beta/models` 
+          ? `${getApiBase()}/api/gemini-proxy/v1beta/models` 
           : `/proxy/gemini/v1beta/models?key=${apiKey}`;
-        const res = await fetch(url);
+        const fetchHeaders: Record<string, string> = {};
+        if (useProxy) {
+          fetchHeaders['X-User-Email'] = getUserEmail();
+        }
+        const res = await fetch(url, { headers: fetchHeaders });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (Array.isArray(data.models)) {
@@ -335,7 +355,7 @@ export async function generateContentStream(params: GenerationParams): Promise<s
       
       const useProxy = !apiKey;
       const url = useProxy 
-        ? `/api/gemini-proxy/v1beta/models/${model}:streamGenerateContent` 
+        ? `${getApiBase()}/api/gemini-proxy/v1beta/models/${model}:streamGenerateContent` 
         : `/proxy/gemini/v1beta/models/${model}:streamGenerateContent?key=${apiKey}`;
 
       const requestPayload: any = {
@@ -360,7 +380,10 @@ export async function generateContentStream(params: GenerationParams): Promise<s
 
       const response = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-User-Email': getUserEmail()
+        },
         body: JSON.stringify(requestPayload)
       });
 
@@ -419,9 +442,12 @@ export async function generateContentStream(params: GenerationParams): Promise<s
       const useProxy = !settings.vertex.serviceAccountJson;
       let url = '';
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (useProxy) {
+        headers['X-User-Email'] = getUserEmail();
+      }
 
       if (useProxy) {
-        url = `/api/vertex-proxy/${region}/${model}`;
+        url = `${getApiBase()}/api/vertex-proxy/${region}/${model}`;
       } else {
         const { token, projectId } = await getGCPAccessToken(settings.vertex.serviceAccountJson);
         url = `https://${region}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${region}/publishers/google/models/${model}:streamGenerateContent`;

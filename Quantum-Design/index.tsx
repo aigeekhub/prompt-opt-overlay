@@ -759,9 +759,133 @@ const PORTAL_CATEGORIES = [
   { id: 'ai-chat', name: 'AI Chat Components', count: 10, group: 'Components' }
 ];
 
+const syntaxHighlightJSON = (jsonObj: any): React.ReactElement => {
+    if (!jsonObj) return <div />;
+    const jsonStr = JSON.stringify(jsonObj, null, 2);
+    const escaped = jsonStr
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    
+    const highlighted = escaped.replace(
+        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
+        (match) => {
+            let cls = 'json-number';
+            if (/^"/.test(match)) {
+                if (/:$/.test(match)) {
+                    cls = 'json-key';
+                } else {
+                    cls = 'json-string';
+                }
+            } else if (/true|false/.test(match)) {
+                cls = 'json-boolean';
+            } else if (/null/.test(match)) {
+                cls = 'json-null';
+            }
+            if (cls === 'json-key') {
+                return `<span class="${cls}" style="color: var(--quantum-cyan, #00f0ff); font-weight: bold;">${match.replace(/:$/, '')}</span><span style="color: #fff;">:</span>`;
+            } else if (cls === 'json-string') {
+                return `<span class="${cls}" style="color: var(--lcars-gold, #ffcc33);">${match}</span>`;
+            } else if (cls === 'json-number') {
+                return `<span class="${cls}" style="color: #39ff14; font-family: monospace;">${match}</span>`;
+            } else {
+                return `<span class="${cls}" style="color: var(--lcars-orange, #ff5f1f);">${match}</span>`;
+            }
+        }
+    );
+    return (
+        <pre 
+            dangerouslySetInnerHTML={{ __html: highlighted }} 
+            style={{
+                fontFamily: 'var(--font-mono, "Roboto Mono", monospace)',
+                fontSize: '0.8rem',
+                margin: 0,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                lineHeight: '1.5',
+                color: '#e5e5e5'
+            }} 
+        />
+    );
+};
+
 function App() {
   const [isBooting, setIsBooting] = useState(true);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  // --- SESSION ACCESS SIGNALS & AUDIT LOGS ---
+  const [userEmail, setUserEmail] = useState<string>(() => {
+    try {
+      return localStorage.getItem('user_email') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [emailInput, setEmailInput] = useState<string>('');
+  const [emailError, setEmailError] = useState<string>('');
+  
+  const [logoClicks, setLogoClickCount] = useState<number>(0);
+  const [isAdminLogsOpen, setIsAdminLogsOpen] = useState<boolean>(false);
+  const [adminPasscode, setAdminPasscode] = useState<string>('');
+  const [isPasscodeSubmitted, setIsPasscodeSubmitted] = useState<boolean>(false);
+  const [adminLogs, setAdminLogs] = useState<any[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState<boolean>(false);
+  const [logsError, setLogsError] = useState<string>('');
+
+  const handleEmailSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = emailInput.trim();
+    if (!trimmed) {
+      setEmailError('EMAIL IDENTIFICATION REQUIRED');
+      playTechSound('error');
+      return;
+    }
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) {
+      setEmailError('INVALID ENCRYPTED ROUTE FORMAT');
+      playTechSound('error');
+      return;
+    }
+    
+    try {
+      localStorage.setItem('user_email', trimmed);
+    } catch (err) {
+      console.error('LocalStorage write failed', err);
+    }
+    
+    setUserEmail(trimmed);
+    setEmailError('');
+    playTechSound('success');
+  };
+
+  const fetchAdminLogs = async (pass: string) => {
+    setIsLoadingLogs(true);
+    setLogsError('');
+    try {
+      const apiBase = typeof window !== 'undefined' && window.location.pathname.startsWith('/quantum') ? '/quantum' : '';
+      const res = await fetch(`${apiBase}/api/admin/logs`, {
+        headers: {
+          'X-Admin-Passcode': pass
+        }
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          throw new Error('ACCESS DENIED: PASSCODE REJECTED BY QUANTUM SECURITY GATE');
+        }
+        const text = await res.text();
+        throw new Error(text || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setAdminLogs(data.logs || []);
+      setIsPasscodeSubmitted(true);
+      playTechSound('success');
+    } catch (err: any) {
+      setLogsError(err.message || 'FAILED RECONSTRUCTING LOG AUDIT STREAM');
+      playTechSound('error');
+    } finally {
+      setIsLoadingLogs(false);
+    }
+  };
   const [isInputCollapsed, setIsInputCollapsed] = useState(false);
   const [isActionBarCollapsed, setIsActionBarCollapsed] = useState(true);
   const [isLoadingVariations, setIsLoadingVariations] = useState(false);
@@ -827,7 +951,7 @@ function App() {
 
   const [drawerState, setDrawerState] = useState<{
       isOpen: boolean;
-      mode: 'code' | 'variations' | 'explain' | 'library' | 'save-to-folder' | 'history' | 'sound-lab' | 'settings' | null;
+      mode: 'code' | 'variations' | 'explain' | 'library' | 'save-to-folder' | 'history' | 'sound-lab' | 'settings' | 'blueprint' | null;
       title: string;
       data: any;
       artifact?: Artifact;
@@ -1734,15 +1858,61 @@ For EACH variation:
       setFocusedArtifactIndex(null);
 
       try {
+          const revBlueprintPrompt = `
+You are UI/UX FLASH BY BOO's Senior Information Architect.
+
+Revise an existing JSON Design Blueprint Schema based on the user's revision request. Maintain full structural continuity with the base blueprint unless explicitly asked to modify it.
+
+BASE BLUEPRINT JSON:
+<<<BASE_BLUEPRINT
+${JSON.stringify(baseSession.blueprint || {}, null, 2)}
+BASE_BLUEPRINT>>>
+
+USER REVISION INSTRUCTIONS:
+"${revisionText}"
+
+Rules:
+- Return ONLY valid JSON.
+- Do NOT wrap in markdown code blocks.
+- Update the layoutStructure, visualDNA, keyComponents, and contentData to incorporate the user's revision requests.
+
+Return the updated JSON design schema only.
+          `.trim();
+
+          let revBlueprint: any = null;
+          try {
+              const revBlueprintText = await generateContent({
+                  prompt: revBlueprintPrompt,
+                  responseMimeType: "application/json"
+              });
+              const jsonMatch = revBlueprintText.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                  revBlueprint = JSON.parse(jsonMatch[0]);
+              }
+          } catch (e) {
+              console.error("Failed to generate revised blueprint:", e);
+          }
+
+          if (!revBlueprint) {
+              revBlueprint = baseSession.blueprint || null;
+          }
+
+          setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, blueprint: revBlueprint } : s));
+
           const generateRevisionArtifact = async (artifact: Artifact, approach: {name: string, guidance: string}) => {
               try {
                   const prompt = `
-You are UI/UX FLASH BY BOO. Revise an existing UI component while STRICTLY maintaining its core DNA.
+You are UI/UX FLASH BY BOO. Revise an existing UI component.
 
 BASE HTML:
 <<<BASE_HTML
 ${baseArtifact.html}
 BASE_HTML>>>
+
+UPDATED JSON DESIGN BLUEPRINT (Figma-Make Schema):
+<<<BLUEPRINT_JSON
+${JSON.stringify(revBlueprint || {}, null, 2)}
+BLUEPRINT_JSON>>>
 
 ORIGINAL UI REQUEST:
 "${baseSession.prompt}"
@@ -1756,7 +1926,7 @@ APPROACH GUIDANCE:
 "${approach.guidance}"
 
 Rules:
-- **DNA INTEGRITY:** Do NOT change the core structure, logic, or content of the Base HTML unless explicitly requested by the revision instructions.
+- **DNA INTEGRITY:** Map the updated blueprint layout, component details, content, and colors accurately. Do NOT modify unrelated elements.
 - Output ONLY HTML. No markdown or commentary.
 - Complete HTML document starting with <!doctype html>.
 - All CSS inside one <style> block.
@@ -1879,6 +2049,115 @@ Return the revised HTML only.
     setFocusedArtifactIndex(null); 
 
     try {
+        // STAGE 1: Prompt-to-JSON Design Blueprint Translation (Figma Make Style)
+        const blueprintPrompt = `
+You are UI/UX FLASH BY BOO's Senior Information Architect.
+
+Translate the user's natural language request into a highly structured, machine-readable JSON Design Blueprint Schema. This schema will serve as the exact structural framework to guide our frontend code generators, replicating the core strategy of Figma Make.
+
+Hard Rules:
+- Return ONLY a valid JSON object matching the schema below.
+- Do NOT wrap the JSON in markdown code blocks.
+- Ensure all content details, text labels, features, and specs from the user's prompt are meticulously preserved in the JSON structure.
+
+JSON Schema to produce:
+{
+  "screenType": "The type of viewport/screen, e.g. 'Dashboard', 'Landing Page', 'Settings Panel', 'E-commerce Checkout', etc.",
+  "layoutStructure": "Visual wireframe grid/flex scheme, e.g. 'Left Sidebar Navigation + Top Header + Responsive Grid Main Content'",
+  "visualDNA": {
+    "primaryColor": "A premium theme-color hex based on request (cyan, gold, orange, lime, magenta, etc.)",
+    "secondaryColor": "A complementary accent theme-color hex",
+    "backgroundColor": "Typically dark theme-oriented, e.g. '#000000', '#0a0a14', or '#08080f'",
+    "accentGlow": "Glow/shadow styling instruction, e.g. '0 0 15px rgba(0, 229, 255, 0.3)'",
+    "density": "Density of layout: 'Tactical Compact', 'Loose Premium', or 'Balanced'"
+  },
+  "navigation": [
+    "Array of 3-5 navigation links or tactical action headers"
+  ],
+  "keyComponents": [
+    {
+      "id": "unique_component_id",
+      "name": "Component Display Name",
+      "type": "UI element type, e.g. 'grid', 'card', 'tab_group', 'stat_block', 'interactive_form', 'data_chart'",
+      "layoutPosition": "Where it is located, e.g. 'Main container top', 'Sidebar bottom', 'Hero section right'",
+      "purpose": "A clear description of what this component displays or does",
+      "visualAccents": "Special styling to apply (e.g., 'glassmorphic panel with cyan glowing borders')",
+      "interactions": [
+        "Array of 1-3 interactive behaviors, e.g., 'hover scaling', 'clicking tabs filters the grid', 'submit shows success state'"
+      ]
+    }
+  ],
+  "contentData": [
+    {
+      "componentId": "matching unique_component_id from above",
+      "title": "Text title or label to use",
+      "items": [
+        "Array of exact text strings, metrics, data points, or placeholder content to render inside the component"
+      ]
+    }
+  ]
+}
+
+USER UI REQUEST:
+"${trimmedInput}"
+        `.trim();
+
+        let blueprint: any = null;
+        try {
+            const blueprintText = await generateContent({
+                prompt: blueprintPrompt,
+                responseMimeType: "application/json"
+            });
+            const jsonMatch = blueprintText.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                blueprint = JSON.parse(jsonMatch[0]);
+            }
+        } catch (e) {
+            console.error("Failed to generate/parse design blueprint:", e);
+        }
+
+        if (!blueprint) {
+            blueprint = {
+                screenType: "Standard Application View",
+                layoutStructure: "Balanced Grid Layout",
+                visualDNA: {
+                    primaryColor: "#00E5FF",
+                    secondaryColor: "#FF5F1F",
+                    backgroundColor: "#05050a",
+                    accentGlow: "0 0 10px rgba(0,229,255,0.2)",
+                    density: "Balanced"
+                },
+                navigation: ["Home", "Overview", "Metrics", "Settings"],
+                keyComponents: [
+                    {
+                        id: "main_content",
+                        name: "Command Center Workspace",
+                        type: "grid",
+                        layoutPosition: "Main viewport",
+                        purpose: "Displays the core requested design interface",
+                        visualAccents: "Bioluminescent glowing neon borders, glassmorphic dark translucent panels",
+                        interactions: ["Hover animations", "Click state validation"]
+                    }
+                ],
+                contentData: [
+                    {
+                        componentId: "main_content",
+                        title: trimmedInput,
+                        items: ["Synthesized via Quantum System", "Interactive live simulation"]
+                    }
+                ]
+            };
+        }
+
+        // Save generated blueprint into state
+        setSessions(prev => prev.map(s => {
+            if (s.id !== sessionId) return s;
+            return {
+                ...s,
+                blueprint: blueprint
+            };
+        }));
+
         const stylePrompt = `
 You are UI/UX FLASH BY BOO's Core Architect.
 
@@ -1942,20 +2221,22 @@ UI REQUEST:
         const generateArtifact = async (artifact: Artifact, styleInstruction: string) => {
             try {
                 const prompt = `
-You are UI/UX FLASH BY BOO's Lead Engineer. Create a stunning, high-fidelity, bleeding-edge tech UI component for the request below.
+You are UI/UX FLASH BY BOO's Lead Engineer. Create a stunning, high-fidelity, bleeding-edge tech UI component based on the structured JSON Design Blueprint below.
 
-UI REQUEST:
-"${trimmedInput}"
+JSON DESIGN BLUEPRINT (Figma-Make Schema):
+<<<BLUEPRINT_JSON
+${JSON.stringify(blueprint, null, 2)}
+BLUEPRINT_JSON>>>
 
-CONCEPTUAL DIRECTION:
+CONCEPTUAL METAPHOR & DIRECTION:
 "${styleInstruction}"
 
 VISUAL EXECUTION RULES:
-1. Materiality: Use the specified conceptual direction to drive every CSS choice (e.g., shadows, borders, gradients, blend modes).
-2. Typography: Use system fonts only (-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif). Pair a bold sans-serif with a refined monospace for data if needed.
-3. Contrast & Visibility: Ensure the components are not too dark. Use sufficient lightness, glowing accents, and high contrast so elements are clearly visible and legible.
-4. Motion: Include subtle, high-performance CSS animations (hover transitions, entry reveals).
-5. Layout: Be bold with negative space and hierarchy. Avoid generic cards.
+1. Blueprint Fidelity: Map the layoutStructure, keyComponents, contentData, and navigation *exactly* as specified in the JSON Design Blueprint.
+2. Materiality: Use the specified conceptual metaphor and direction ("${styleInstruction}") to drive every CSS choice (shadows, borders, glassmorphism, depth, blend modes).
+3. Typography: Use system fonts only (-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif). Pair bold headings with refined monospace labels.
+4. Contrast & Visibility: Keep backgrounds deep/dark, but use bright, radiant neon/bioluminescent accents and high text contrast so every element is clearly legible.
+5. Motion: Include subtle, premium CSS animations (hover scaling, glowing pulses, fade-ins).
 6. IP SAFEGUARD: No artist names or trademarks.
 
 TECHNICAL REQUIREMENTS:
@@ -1963,6 +2244,7 @@ TECHNICAL REQUIREMENTS:
 - Include a self-contained <style> block in the <head>.
 - Do NOT include any external assets, libraries, or network calls (no external fonts, no external CSS/JS).
 - Do NOT wrap the response in markdown fences (e.g., \`\`\`html). Return raw code.
+- Ensure all interactive scripts (if needed for toggles, tabs, simulated sliders) are fully functional in vanilla Javascript in a <script> block at the bottom.
           `.trim();
           
                 let accumulatedHtml = '';
@@ -2055,6 +2337,7 @@ TECHNICAL REQUIREMENTS:
       } : s));
 
       try {
+          const blueprint = session.blueprint;
           let prompt = '';
           if (session.kind === 'revision') {
               const baseSession = sessions.find(s => s.id === session.parentSessionId);
@@ -2085,6 +2368,11 @@ BASE HTML:
 ${baseArtifact.html}
 BASE_HTML>>>
 
+UPDATED JSON DESIGN BLUEPRINT (Figma-Make Schema):
+<<<BLUEPRINT_JSON
+${JSON.stringify(blueprint || {}, null, 2)}
+BLUEPRINT_JSON>>>
+
 ORIGINAL UI REQUEST:
 "${baseSession.prompt}"
 
@@ -2097,31 +2385,34 @@ APPROACH GUIDANCE:
 "${guidance}"
 
 Rules:
+- **DNA INTEGRITY:** Map the updated blueprint layout, component details, content, and colors accurately. Do NOT modify unrelated elements.
 - Output ONLY HTML. No markdown or commentary.
 - Complete HTML document starting with <!doctype html>.
 - All CSS inside one <style> block.
 - No external assets/libs, no network calls.
-- Preserve purpose; apply the revision instructions faithfully.
+- Maintain a bleeding-edge tech, futuristic aesthetic.
 - Contrast & Visibility: Ensure the components are not too dark. Use sufficient lightness, glowing accents, and high contrast so elements are clearly visible.
 
 Return the revised HTML only.
               `.trim();
           } else {
               prompt = `
-You are UI/UX FLASH BY BOO’s Lead Engineer. Create a stunning, high-fidelity UI component for the request below.
+You are UI/UX FLASH BY BOO’s Lead Engineer. Create a stunning, high-fidelity UI component based on the structured JSON Design Blueprint below.
 
-UI REQUEST:
-"${session.prompt}"
+JSON DESIGN BLUEPRINT (Figma-Make Schema):
+<<<BLUEPRINT_JSON
+${JSON.stringify(blueprint || {}, null, 2)}
+BLUEPRINT_JSON>>>
 
 CONCEPTUAL DIRECTION:
 "${styleName}"
 
 VISUAL EXECUTION RULES:
-1. Materiality: Use the specified conceptual direction to drive every CSS choice (e.g., shadows, borders, gradients, blend modes).
-2. Typography: Use system fonts only (-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif). Pair a bold sans-serif with a refined monospace for data if needed.
-3. Contrast & Visibility: Ensure the components are not too dark. Use sufficient lightness, glowing accents, and high contrast so elements are clearly visible and legible.
-4. Motion: Include subtle, high-performance CSS animations (hover transitions, entry reveals).
-5. Layout: Be bold with negative space and hierarchy. Avoid generic cards.
+1. Blueprint Fidelity: Map the layoutStructure, keyComponents, contentData, and navigation *exactly* as specified in the JSON Design Blueprint.
+2. Materiality: Use the specified conceptual direction to drive every CSS choice (e.g., shadows, borders, gradients, blend modes).
+3. Typography: Use system fonts only (-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif). Pair a bold sans-serif with a refined monospace for data if needed.
+4. Contrast & Visibility: Ensure the components are not too dark. Use sufficient lightness, glowing accents, and high contrast so elements are clearly visible and legible.
+5. Motion: Include subtle, high-performance CSS animations (hover transitions, entry reveals).
 6. IP SAFEGUARD: No artist names or trademarks.
 
 TECHNICAL REQUIREMENTS:
@@ -2129,6 +2420,7 @@ TECHNICAL REQUIREMENTS:
 - Include a self-contained <style> block in the <head>.
 - Do NOT include any external assets, libraries, or network calls (no external fonts, no external CSS/JS).
 - Do NOT wrap the response in markdown fences (e.g., \`\`\`html). Return raw code.
+- Ensure all interactive scripts are fully functional in vanilla Javascript in a <script> block at the bottom.
               `.trim();
           }
 
@@ -2377,7 +2669,24 @@ Rules:
         <div className="scan-line" />
         
         <header className="header-system" style={{ position: 'relative' }}>
-            <div className="header-brand" style={{ fontFamily: 'var(--font-orbitron)', letterSpacing: '2px', fontWeight: 900, color: 'var(--quantum-cyan)' }}>QUANTUM DESIGN</div>
+            <div 
+                className="header-brand" 
+                onClick={() => {
+                    playTechSound('click');
+                    setLogoClickCount(c => {
+                        const count = c + 1;
+                        if (count >= 5) {
+                            setIsAdminLogsOpen(true);
+                            setLogoClickCount(0);
+                            playTechSound('success');
+                        }
+                        return count;
+                    });
+                }}
+                style={{ fontFamily: 'var(--font-orbitron)', letterSpacing: '2px', fontWeight: 900, color: 'var(--quantum-cyan)', cursor: 'pointer' }}
+            >
+                QUANTUM DESIGN
+            </div>
             
             <div className="header-bar">
                 <span 
@@ -2516,6 +2825,15 @@ Rules:
                                 setNotification({ message: "OPENING DATA VAULT...", type: 'protocol' });
                             }}>VAULT_PUSH</div>
                             <div className="opt-item" onClick={() => { playTechSound('click'); setDrawerState({ isOpen: true, mode: 'code', title: 'Source Matrix', data: currentSession?.artifacts[focusedArtifactIndex || 0]?.html || '' }); }}>SOURCE</div>
+                            <div className="opt-item" onClick={() => { 
+                                playTechSound('click'); 
+                                setDrawerState({ 
+                                    isOpen: true, 
+                                    mode: 'blueprint', 
+                                    title: 'Design Blueprint', 
+                                    data: sessions[currentSessionIndex]?.blueprint || null 
+                                }); 
+                            }}>BLUEPRINT</div>
                             <div className="opt-item" onClick={() => { playTechSound('click'); }}>CLONE</div>
                         </motion.div>
                     )}
@@ -2910,6 +3228,234 @@ Rules:
                             </div>
                         </div>
                     ) : null}
+                </div>
+            )}
+
+            {drawerState.mode === 'blueprint' && (
+                <div className="blueprint-view-container" style={{ display: 'flex', flexDirection: 'column', gap: '20px', padding: '10px 0' }}>
+                    {!drawerState.data ? (
+                        <div className="error-message" style={{ textAlign: 'center', padding: '40px 0', color: 'var(--lcars-orange)' }}>
+                            NO DESIGN BLUEPRINT FOUND IN THE ACTIVE SYSTEM STATE
+                        </div>
+                    ) : (
+                        <>
+                            {/* Interactive Blueprint Status HUD */}
+                            <div className="blueprint-hud-panel" style={{
+                                background: 'rgba(255, 255, 255, 0.02)',
+                                border: '1px solid rgba(0, 240, 255, 0.15)',
+                                padding: '16px',
+                                borderRadius: '12px',
+                                backdropFilter: 'blur(10px)',
+                                boxShadow: 'inset 0 0 15px rgba(0, 240, 255, 0.05)'
+                            }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(0, 240, 255, 0.1)', paddingBottom: '10px', marginBottom: '12px' }}>
+                                    <span style={{ fontFamily: 'var(--font-orbitron)', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--quantum-cyan, #00f0ff)', letterSpacing: '1px' }}>
+                                        SYNAPSE // ENGINE_SPEC
+                                    </span>
+                                    <span style={{
+                                        fontFamily: 'var(--font-mono)',
+                                        fontSize: '0.65rem',
+                                        background: 'rgba(0, 240, 255, 0.1)',
+                                        padding: '2px 8px',
+                                        borderRadius: '4px',
+                                        color: '#00f0ff',
+                                        border: '1px solid rgba(0, 240, 255, 0.2)'
+                                    }}>
+                                        ACTIVE_BLUEPRINT
+                                    </span>
+                                </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.8rem' }}>
+                                    <div>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '2px' }}>Screen Type</div>
+                                        <div style={{ color: '#fff', fontWeight: 'bold' }}>{drawerState.data.screenType || 'Not Specified'}</div>
+                                    </div>
+                                    <div>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '2px' }}>Density Setting</div>
+                                        <div style={{ color: 'var(--lcars-gold, #ffcc33)', fontWeight: 'bold' }}>
+                                            {drawerState.data.visualDNA?.density || 'Balanced'}
+                                        </div>
+                                    </div>
+                                    <div style={{ gridColumn: 'span 2' }}>
+                                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '2px' }}>Layout Architecture</div>
+                                        <div style={{ color: '#fff', fontFamily: 'var(--font-mono)', fontSize: '0.75rem', opacity: 0.9 }}>
+                                            {drawerState.data.layoutStructure || 'Standard Flow'}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {/* Live Glowing Color Dots */}
+                                <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.05)', marginTop: '12px', paddingTop: '10px' }}>
+                                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '6px' }}>Visual DNA Swatches</div>
+                                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                                        {drawerState.data.visualDNA?.primaryColor && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: drawerState.data.visualDNA.primaryColor,
+                                                    boxShadow: `0 0 8px ${drawerState.data.visualDNA.primaryColor}`
+                                                }} />
+                                                <span style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>Primary: {drawerState.data.visualDNA.primaryColor}</span>
+                                            </div>
+                                        )}
+                                        {drawerState.data.visualDNA?.secondaryColor && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: drawerState.data.visualDNA.secondaryColor,
+                                                    boxShadow: `0 0 8px ${drawerState.data.visualDNA.secondaryColor}`
+                                                }} />
+                                                <span style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>Secondary: {drawerState.data.visualDNA.secondaryColor}</span>
+                                            </div>
+                                        )}
+                                        {drawerState.data.visualDNA?.backgroundColor && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: drawerState.data.visualDNA.backgroundColor,
+                                                    border: '1px solid rgba(255,255,255,0.2)'
+                                                }} />
+                                                <span style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>Base: {drawerState.data.visualDNA.backgroundColor}</span>
+                                            </div>
+                                        )}
+                                        {drawerState.data.visualDNA?.accentGlow && (
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                                <span style={{
+                                                    display: 'inline-block',
+                                                    width: '12px',
+                                                    height: '12px',
+                                                    borderRadius: '50%',
+                                                    background: drawerState.data.visualDNA.accentGlow,
+                                                    boxShadow: `0 0 10px ${drawerState.data.visualDNA.accentGlow}`
+                                                }} />
+                                                <span style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)' }}>Glow: {drawerState.data.visualDNA.accentGlow}</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Component Node Inspector */}
+                            {drawerState.data.keyComponents && drawerState.data.keyComponents.length > 0 && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                                    <div style={{ fontFamily: 'var(--font-orbitron)', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--quantum-cyan, #00f0ff)', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                                        Blueprint Components ({drawerState.data.keyComponents.length})
+                                    </div>
+                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                        {drawerState.data.keyComponents.map((comp: any) => (
+                                            <details key={comp.id} className="blueprint-comp-detail" style={{
+                                                background: 'rgba(255, 255, 255, 0.01)',
+                                                border: '1px solid rgba(255, 255, 255, 0.05)',
+                                                borderRadius: '8px',
+                                                overflow: 'hidden'
+                                            }}>
+                                                <summary style={{
+                                                    padding: '10px 14px',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: 'bold',
+                                                    color: '#fff',
+                                                    cursor: 'pointer',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'space-between',
+                                                    background: 'rgba(255, 255, 255, 0.02)',
+                                                    userSelect: 'none'
+                                                }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                        <span style={{ color: 'var(--lcars-gold, #ffcc33)', fontSize: '0.6rem', fontFamily: 'var(--font-mono)' }}>[{comp.id}]</span>
+                                                        <span>{comp.name}</span>
+                                                    </div>
+                                                    <span style={{
+                                                        fontSize: '0.65rem',
+                                                        background: 'rgba(255, 255, 255, 0.05)',
+                                                        padding: '1px 6px',
+                                                        borderRadius: '4px',
+                                                        color: 'var(--text-secondary)',
+                                                        fontFamily: 'var(--font-mono)'
+                                                    }}>{comp.type}</span>
+                                                </summary>
+                                                <div style={{ padding: '12px 14px', fontSize: '0.75rem', color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: '8px', borderTop: '1px solid rgba(255,255,255,0.03)' }}>
+                                                    <div>
+                                                        <strong style={{ color: '#fff' }}>Position:</strong> {comp.layoutPosition || 'Not Specified'}
+                                                    </div>
+                                                    <div>
+                                                        <strong style={{ color: '#fff' }}>Purpose:</strong> {comp.purpose || 'Not Specified'}
+                                                    </div>
+                                                    {comp.visualAccents && (
+                                                        <div>
+                                                            <strong style={{ color: '#fff' }}>Accents:</strong> {comp.visualAccents}
+                                                        </div>
+                                                    )}
+                                                    {comp.interactions && comp.interactions.length > 0 && (
+                                                        <div>
+                                                            <strong style={{ color: '#fff' }}>Interactions:</strong>
+                                                            <ul style={{ margin: '4px 0 0 16px', padding: 0, listStyleType: 'square' }}>
+                                                                {comp.interactions.map((act: string, idx: number) => (
+                                                                    <li key={idx} style={{ marginBottom: '2px' }}>{act}</li>
+                                                                ))}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </details>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Raw Specification Code Block */}
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '10px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div style={{ fontFamily: 'var(--font-orbitron)', fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--quantum-cyan, #00f0ff)', letterSpacing: '1px', textTransform: 'uppercase' }}>
+                                        Raw Spec JSON
+                                    </div>
+                                    <button 
+                                        onClick={async () => {
+                                            playTechSound('click');
+                                            try {
+                                                await navigator.clipboard.writeText(JSON.stringify(drawerState.data, null, 2));
+                                                setNotification({ message: "BLUEPRINT SPECIFICATION COPIED TO CLIPBOARD", type: "protocol" });
+                                            } catch (err) {
+                                                setNotification({ message: "CLIPBOARD COPY OPERATION FAILED", type: "error" });
+                                            }
+                                        }}
+                                        className="lcars-btn-inner"
+                                        style={{
+                                            fontSize: '0.65rem',
+                                            padding: '4px 10px',
+                                            background: 'rgba(0, 240, 255, 0.1)',
+                                            border: '1px solid rgba(0, 240, 255, 0.2)',
+                                            borderRadius: '4px',
+                                            color: '#00f0ff',
+                                            cursor: 'pointer',
+                                            fontFamily: 'var(--font-mono)'
+                                        }}
+                                    >
+                                        COPY SPECIFICATION
+                                    </button>
+                                </div>
+                                <div className="json-container-scroll" style={{
+                                    maxHeight: '350px',
+                                    overflowY: 'auto',
+                                    background: 'rgba(0, 0, 0, 0.4)',
+                                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                                    borderRadius: '10px',
+                                    padding: '16px',
+                                    backdropFilter: 'blur(5px)'
+                                }}>
+                                    {syntaxHighlightJSON(drawerState.data)}
+                                </div>
+                            </div>
+                        </>
+                    )}
                 </div>
             )}
 
@@ -4212,6 +4758,206 @@ Rules:
                             );
                         }}>INITIATE_SEQUENCE</button>
                     </div>
+                </div>
+            </div>
+        )}
+
+        {!userEmail && (
+            <div className="modal-overlay session-gate-overlay" style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                width: '100vw',
+                height: '100vh',
+                background: 'rgba(1, 4, 9, 0.95)',
+                backdropFilter: 'blur(20px)',
+                zIndex: 9999,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontFamily: 'var(--font-orbitron, monospace)'
+            }}>
+                <div className="session-gate-card" style={{
+                    background: 'rgba(10, 25, 47, 0.45)',
+                    border: '2px solid var(--lume-cyan)',
+                    boxShadow: '0 0 35px rgba(0, 242, 255, 0.25)',
+                    borderRadius: '12px',
+                    padding: '40px',
+                    maxWidth: '480px',
+                    width: '90%',
+                    textAlign: 'center',
+                    position: 'relative',
+                    overflow: 'hidden'
+                }}>
+                    <div style={{ position: 'absolute', top: 0, left: 0, width: '15px', height: '15px', borderLeft: '3px solid var(--lcars-orange)', borderTop: '3px solid var(--lcars-orange)' }} />
+                    <div style={{ position: 'absolute', top: 0, right: 0, width: '15px', height: '15px', borderRight: '3px solid var(--lcars-orange)', borderTop: '3px solid var(--lcars-orange)' }} />
+                    <div style={{ position: 'absolute', bottom: 0, left: 0, width: '15px', height: '15px', borderLeft: '3px solid var(--lcars-orange)', borderBottom: '3px solid var(--lcars-orange)' }} />
+                    <div style={{ position: 'absolute', bottom: 0, right: 0, width: '15px', height: '15px', borderRight: '3px solid var(--lcars-orange)', borderBottom: '3px solid var(--lcars-orange)' }} />
+
+                    <div style={{ fontSize: '11px', color: 'var(--lcars-orange)', letterSpacing: '4px', marginBottom: '8px' }}>[ SECURE QUANTUM TERMINAL ]</div>
+                    <h2 style={{ fontSize: '24px', fontWeight: 900, color: 'var(--lume-cyan)', textShadow: '0 0 10px rgba(0, 242, 255, 0.5)', marginBottom: '30px', letterSpacing: '2px' }}>NEURAL BUFFER ACCESS</h2>
+                    
+                    <form onSubmit={handleEmailSubmit}>
+                        <div style={{ marginBottom: '25px', textAlign: 'left' }}>
+                            <label className="lcars-label" style={{ display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>USER IDENTIFICATION EMAIL</label>
+                            <input 
+                                type="email"
+                                placeholder="identity@quantum.com"
+                                value={emailInput}
+                                onChange={(e) => setEmailInput(e.target.value)}
+                                className="lcars-input"
+                                style={{
+                                    width: '100%',
+                                    boxSizing: 'border-box',
+                                    background: 'rgba(1, 4, 9, 0.6)',
+                                    border: '1px solid var(--lume-cyan)',
+                                    borderRadius: '6px',
+                                    color: '#fff',
+                                    fontSize: '14px',
+                                    padding: '12px 16px',
+                                    outline: 'none',
+                                    fontFamily: 'var(--font-mono)',
+                                    boxShadow: 'inset 0 0 10px rgba(0, 242, 255, 0.15)',
+                                    transition: 'border-color 0.3s, box-shadow 0.3s'
+                                }}
+                            />
+                            {emailError && (
+                                <div style={{ color: 'var(--neon-electric)', fontSize: '11px', marginTop: '8px', letterSpacing: '1px', fontWeight: 'bold' }}>
+                                    ⚠ {emailError}
+                                </div>
+                            )}
+                        </div>
+
+                        <button 
+                            type="submit"
+                            className="btn-primary"
+                            style={{
+                                width: '100%',
+                                padding: '14px',
+                                fontWeight: 900,
+                                letterSpacing: '2px',
+                                background: 'linear-gradient(90deg, var(--lume-cyan), var(--lume-purple))',
+                                border: 'none',
+                                color: '#000',
+                                cursor: 'pointer',
+                                borderRadius: '6px',
+                                boxShadow: '0 0 15px rgba(0, 242, 255, 0.4)',
+                                transition: 'all 0.3s'
+                            }}
+                        >
+                            INITIATE SESSION_
+                        </button>
+                    </form>
+                    
+                    <div style={{ marginTop: '25px', fontSize: '10px', color: 'var(--text-secondary)', letterSpacing: '1px' }}>
+                        AUDIT TELEMETRY STATUS: <span style={{ color: 'var(--lume-green)' }}>ONLINE</span>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {isAdminLogsOpen && (
+            <div className="modal-overlay" style={{ zIndex: 3000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(1, 4, 9, 0.9)', backdropFilter: 'blur(10px)', fontFamily: 'var(--font-mono)' }}>
+                <div className="modal-content lcars-modal" style={{ maxWidth: '950px', width: '95%', maxHeight: '85vh', display: 'flex', flexDirection: 'column', background: 'rgba(10, 25, 47, 0.85)', border: '2px solid var(--neon-electric)', boxShadow: '0 0 30px rgba(255, 0, 255, 0.25)', padding: '30px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px', marginBottom: '20px' }}>
+                        <div>
+                            <div style={{ fontSize: '10px', color: 'var(--lcars-orange)', letterSpacing: '2px' }}>[ PROTOCOL SECURE OVERSIGHT ]</div>
+                            <h2 style={{ fontSize: '20px', fontWeight: 900, color: 'var(--neon-electric)', letterSpacing: '2px', margin: 0, textShadow: '0 0 10px rgba(255, 0, 255, 0.3)' }}>QUANTUM AUDIT LOGS</h2>
+                        </div>
+                        <button className="btn-secondary" style={{ padding: '4px 12px', fontSize: '11px' }} onClick={() => { setIsAdminLogsOpen(false); setIsPasscodeSubmitted(false); setAdminPasscode(''); setAdminLogs([]); setLogsError(''); }}>CLOSE</button>
+                    </div>
+
+                    {!isPasscodeSubmitted ? (
+                        <div style={{ margin: 'auto', maxWidth: '350px', width: '100%', textAlign: 'center', padding: '40px 0' }}>
+                            <div style={{ fontSize: '40px', color: 'var(--neon-electric)', marginBottom: '15px' }}><LockIcon /></div>
+                            <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '20px', letterSpacing: '1px' }}>ENTER ADMINISTRATIVE AUTHORIZATION PASSCODE</p>
+                            <input 
+                                type="password"
+                                placeholder="ENTER PASSCODE..."
+                                value={adminPasscode}
+                                onChange={(e) => setAdminPasscode(e.target.value)}
+                                className="lcars-input"
+                                style={{ width: '100%', textAlign: 'center', letterSpacing: '3px', marginBottom: '15px' }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter') {
+                                        fetchAdminLogs(adminPasscode);
+                                    }
+                                }}
+                            />
+                            {logsError && (
+                                <div style={{ color: 'var(--neon-electric)', fontSize: '11px', marginBottom: '15px', fontWeight: 'bold' }}>{logsError}</div>
+                            )}
+                            <button 
+                                className="btn-primary" 
+                                style={{ width: '100%' }}
+                                disabled={isLoadingLogs}
+                                onClick={() => fetchAdminLogs(adminPasscode)}
+                            >
+                                {isLoadingLogs ? 'VERIFYING SECURITY TOKENS...' : 'AUTHORIZE_'}
+                            </button>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+                                <div style={{ fontSize: '11px', color: 'var(--lume-green)', letterSpacing: '1px' }}>
+                                    SYSTEM AUDIT: {adminLogs.length} ENTRIES RETRIEVED
+                                </div>
+                                <button 
+                                    className="btn-primary" 
+                                    style={{ padding: '6px 14px', fontSize: '11px' }} 
+                                    onClick={() => fetchAdminLogs(adminPasscode)}
+                                    disabled={isLoadingLogs}
+                                >
+                                    {isLoadingLogs ? 'REFRESHING...' : 'REFRESH STREAM'}
+                                </button>
+                            </div>
+
+                            <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '6px', background: 'rgba(1, 4, 9, 0.6)' }} className="quantum-scrollbar">
+                                {adminLogs.length === 0 ? (
+                                    <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '12px', letterSpacing: '1px' }}>
+                                        NO NEURAL GENERATION LOGS CURRENTLY BUFFERED
+                                    </div>
+                                ) : (
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                                        <thead>
+                                            <tr style={{ borderBottom: '1px solid var(--border-color)', background: 'rgba(255,255,255,0.03)', textAlign: 'left' }}>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>TIMESTAMP</th>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>USER</th>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>PROVIDER/MODEL</th>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>PROMPT</th>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>COMPLETION</th>
+                                                <th style={{ padding: '12px', color: 'var(--lcars-orange)' }}>STATUS</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {adminLogs.map((log: any, idx: number) => {
+                                                const isErr = !!log.error;
+                                                return (
+                                                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', verticalAlign: 'top' }}>
+                                                        <td style={{ padding: '12px', whiteSpace: 'nowrap', color: 'var(--text-secondary)' }}>{new Date(log.timestamp).toLocaleString()}</td>
+                                                        <td style={{ padding: '12px', color: 'var(--lume-cyan)', fontWeight: 'bold' }}>{log.email || 'anonymous'}</td>
+                                                        <td style={{ padding: '12px', color: 'var(--lume-purple)' }}>{log.provider}/{log.model}</td>
+                                                        <td style={{ padding: '12px', maxWidth: '180px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={log.prompt}>{log.prompt}</td>
+                                                        <td style={{ padding: '12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={isErr ? log.error : log.response}>
+                                                            {isErr ? <span style={{ color: 'var(--neon-electric)' }}>{log.error}</span> : log.response}
+                                                        </td>
+                                                        <td style={{ padding: '12px' }}>
+                                                            {isErr ? (
+                                                                <span style={{ color: 'var(--neon-electric)', border: '1px solid var(--neon-electric)', borderRadius: '3px', padding: '2px 6px', fontSize: '9px', background: 'rgba(255,0,255,0.1)' }}>FAULT</span>
+                                                            ) : (
+                                                                <span style={{ color: 'var(--lume-green)', border: '1px solid var(--lume-green)', borderRadius: '3px', padding: '2px 6px', fontSize: '9px', background: 'rgba(57,255,20,0.1)' }}>SUCCESS</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                )}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         )}
